@@ -39,28 +39,8 @@ jobs:
         with:
           terraform_version: "1.7.5"
           
-      - name: Locate terraform dir
-        id: tfdir
-        run: |
-          if [ -d "terraform" ]; then
-            echo "dir=terraform" >> $GITHUB_OUTPUT
-          else
-            echo "dir=." >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Debug tfdir + list config
-        run: |
-          echo "tfdir='${{ steps.tfdir.outputs.dir }}'"
-          echo "PWD=$(pwd)"
-          echo "List tfdir:"
-          ls -la "${{ steps.tfdir.outputs.dir }}" || true
-          echo "TF files in tfdir:"
-          find "${{ steps.tfdir.outputs.dir }}" -maxdepth 1 -name "*.tf" -print || true
-          echo "TF files in repo (maxdepth 4):"
-          find . -maxdepth 4 -name "*.tf" -print || true
-          
       - name: Terraform init
-        working-directory: ${{ steps.tfdir.outputs.dir }}
+        working-directory: workflows/terraform
         run: terraform init
 
       - name: Terraform plan
