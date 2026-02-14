@@ -1,0 +1,110 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+
+write_files:
+- path: /usr/local/bin/bootstrap.sh
+permissions: "0755"
+content: |
+#!/usr/bin/env bash
+set -euo pipefail
+exec > >(tee -a /var/log/bootstrap.log) 2>&1
+
+
+ADMIN_USER="azureuser"
+BASTION_CIDR="10.0.255.0/27" # muss zu deinem AzureBastionSubnet passen
+VNC_DISPLAY=":1"
+VNC_PORT="5901"
+
+
+ENABLE_CUDA_TOOLKIT="true" # nur Toolkit; Treiber besser via Azure Extension
+CUDA_KEYRING_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
+CUDA_APT_PKG="cuda-toolkit"
+
+
+INSTALL_ROS2="true"
+ROS_DISTRO="humble"
+
+
+INSTALL_GAZEBO="true" # installiert Gazebo (Ubuntu-Paket) + ROS-Gazebo-Plugins
+
+
+INSTALL_ISAAC_HELPERS="true" # legt helper scripts an; Container Pull erfordert ggf. nvcr.io Login
+ISAAC_IMAGE="nvcr.io/nvidia/isaac-sim:latest"
+
+
+echo "=== [1/9] Base packages & hardening ==="
+apt-get update
+apt-get install -y --no-install-recommends \
+ufw fail2ban unattended-upgrades \
+curl ca-certificates gnupg lsb-release \
+git wget \
+dbus-x11 xterm mesa-utils \
+xfce4 xfce4-goodies
+
+
+cat >/etc/ssh/sshd_config.d/99-hardening.conf <<'EOF'
+PasswordAuthentication no
+PermitRootLogin no
+PubkeyAuthentication yes
+X11Forwarding no
+AllowTcpForwarding no
+ClientAliveInterval 300
+ClientAliveCountMax 2
+EOF
+systemctl restart ssh
+
+
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow from "$BASTION_CIDR" to any port 22 proto tcp
+ufw allow from "$BASTION_CIDR" to any port "$VNC_PORT" proto tcp
+ufw --force enable
+
+
+dpkg-reconfigure -f noninteractive unattended-upgrades || true
+
+
+echo "=== [2/9] TurboVNC + VirtualGL ==="
+# TurboVNC via Packagecloud Repo (robuster als Random-Downloads)
+# Falls deine Umgebung outbound restriktiv ist, musst du diese Domains erlauben.
+curl -fsSL https://packagecloud.io/dcommander/turbovnc/gpgkey | gpg --dearmor -o /usr/share/keyrings/turbovnc.gpg
+echo "deb [signed-by=/usr/share/keyrings/turbovnc.gpg] https://packagecloud.io/dcommander/turbovnc/ubuntu/ jammy main" > /etc/apt/sources.list.d/turbovnc.list
+apt-get update
+apt-get install -y turbovnc
+
+
+# VirtualGL (Ubuntu-Paket)
+apt-get install -y virtualgl
+
+
+# vglusers
+getent group vglusers >/dev/null || groupadd -r vglusers
+usermod -aG vglusers "$ADMIN_USER"
+
+
+# VNC xstartup
+install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_USER" "/home/$ADMIN_USER/.vnc"
+cat >"/home/$ADMIN_USER/.vnc/xstartup" <<'EOF'
+#!/bin/sh
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+startxfce4 &
+EOF
+chown "$ADMIN_USER:$ADMIN_USER" "/home/$ADMIN_USER/.vnc/xstartup"
+chmod 0755 "/home/$ADMIN_USER/.vnc/xstartup"
+
+
+# systemd TurboVNC
+cat >/etc/systemd/system/turbovnc@.service <<EOF
+[Unit]
+Description=TurboVNC server for display %i
+After=network.target
+
+
+[Service]
+Type=forking
+User=$ADMIN_USER
+final_message: "Bootstrap started via systemd. Check /var/log/bootstrap.log"
