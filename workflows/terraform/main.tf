@@ -142,10 +142,8 @@ resource "azurerm_linux_virtual_machine" "vm" {
 
   # optional Hardening
   encryption_at_host_enabled = true
-  security_profile {
-    secure_boot_enabled = true
-    vtpm_enabled        = true
-  }
+  secure_boot_enabled = true
+  vtpm_enabled        = true
 }
 
 # -----------------------------
