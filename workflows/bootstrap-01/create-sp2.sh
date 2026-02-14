@@ -110,6 +110,12 @@ az role assignment create \
   --role "Contributor" \
   --scope "$RG_ID" >/dev/null 2>&1 || true
 
+az role assignment create \
+  --assignee-object-id "$SP_OBJECT_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Reader" \
+  --scope "/subscriptions/$SUBSCRIPTION_ID" >/dev/null 2>&1 || true
+
 # ---------------------------
 # Federated Credential (OIDC)
 # ---------------------------
