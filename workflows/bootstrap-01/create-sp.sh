@@ -165,18 +165,11 @@ add_github_secrets() {
 
     # Add AZURE_CLIENT_SECRET
     if [ -n "$CLIENT_SECRET" ]; then
-        # If the secret was supplied via AZURE_CLIENT_SECRET env, assume it's already set in the
-        # environment/CI and avoid overwriting the repo secret. Otherwise, add it to the repo.
-        if [ -n "${AZURE_CLIENT_SECRET:-}" ]; then
-            log_info "AZURE_CLIENT_SECRET provided via environment; skipping gh secret set to avoid overwrite"
-            log_success "AZURE_CLIENT_SECRET present"
+        log_info "Adding AZURE_CLIENT_SECRET..."
+        if gh secret set AZURE_CLIENT_SECRET --body "$CLIENT_SECRET" --repo "$GITHUB_REPO"; then
+            log_success "AZURE_CLIENT_SECRET added"
         else
-            log_info "Adding AZURE_CLIENT_SECRET..."
-            if gh secret set AZURE_CLIENT_SECRET --body "$CLIENT_SECRET" --repo "$GITHUB_REPO"; then
-                log_success "AZURE_CLIENT_SECRET added"
-            else
-                log_warning "Failed to add AZURE_CLIENT_SECRET"
-            fi
+            log_warning "Failed to add AZURE_CLIENT_SECRET"
         fi
     fi
 
@@ -255,12 +248,8 @@ generate_github_secrets() {
     echo "AZURE_TENANT_ID: $TENANT_ID"
     echo "AZURE_SUBSCRIPTION_ID: $SUBSCRIPTION_ID"
     echo ""
-    if [ -n "${AZURE_CLIENT_SECRET:-}" ]; then
-        echo "Note: Using existing AZURE_CLIENT_SECRET from environment (value not displayed)."
-    else
-        echo "Note: The client secret is displayed below. Save it in a secure location."
-        echo ""
-    fi
+    echo "Note: The client secret is displayed below. Save it in a secure location."
+    echo ""
 }
 
 # Create client secret
@@ -365,16 +354,7 @@ main() {
     get_github_repo
     create_service_principal
     assign_custom_role
-    # If AZURE_CLIENT_SECRET is provided in the environment (e.g., CI/GitHub Actions or user-supplied),
-    # use it instead of creating a new client secret. This allows the script to run without
-    # creating/resetting credentials when a secret already exists.
-    if [ -n "${AZURE_CLIENT_SECRET:-}" ]; then
-        CLIENT_SECRET="$AZURE_CLIENT_SECRET"
-        log_info "Using existing AZURE_CLIENT_SECRET from environment (will not display value)"
-    else
-        create_client_secret
-    fi
-
+    create_client_secret
     add_github_secrets
     generate_github_secrets
     display_terraform_config
