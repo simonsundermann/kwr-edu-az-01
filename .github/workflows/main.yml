@@ -1,0 +1,53 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_admin_username: ${{ secrets.TF_VAR_ADMIN_USERNAME }}
+      TF_VAR_ssh_public_key: ${{ secrets.TF_VAR_SSH_PUBLIC_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: Sanity
+        run: az account show
+          
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+          
+      - name: Terraform init
+        working-directory: workflows/terraform
+        run: terraform init
+
+      - name: Terraform plan
+        working-directory: workflows/terraform
+        run: terraform plan -out tfplan
+
+      - name: Terraform apply
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: workflows/terraform
+        run: terraform apply -auto-approve tfplan
