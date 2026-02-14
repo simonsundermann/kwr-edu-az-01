@@ -38,16 +38,25 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.7.5"
-
+          
+      - name: Locate terraform dir
+        id: tfdir
+        run: |
+          if [ -d "terraform" ]; then
+            echo "dir=terraform" >> $GITHUB_OUTPUT
+          else
+            echo "dir=." >> $GITHUB_OUTPUT
+          fi
+    
       - name: Terraform init
-        working-directory: terraform
+        working-directory: ${{ steps.tfdir.outputs.dir }}
         run: terraform init
 
       - name: Terraform plan
-        working-directory: terraform
+        working-directory: ${{ steps.tfdir.outputs.dir }}
         run: terraform plan -out tfplan
 
       - name: Terraform apply
         if: github.event_name == 'workflow_dispatch'
-        working-directory: terraform
+        working-directory: ${{ steps.tfdir.outputs.dir }}
         run: terraform apply -auto-approve tfplan
