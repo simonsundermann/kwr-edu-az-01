@@ -17,37 +17,42 @@ provider "azurerm" {
   # Least-privilege: verhindert, dass Terraform versucht, Provider auf Subscription zu registrieren
   skip_provider_registration = true
 }
-
-resource "azurerm_resource_group" "rg" {
-  name     = var.resource_group_name
-  location = var.location
+#RG created in create-sp2 with role assignment already
+data "azurerm_resource_group" "rg" {
+  name = var.resource_group_name
 }
+
+#uncomment RG not created in create-sp2 with role assignment already
+#resource "azurerm_resource_group" "rg" {
+#  name     = var.resource_group_name
+#  location = var.location
+#}
 
 resource "azurerm_virtual_network" "vnet" {
   name                = "${var.name_prefix}-vnet"
   address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
+  resource_group_name = data.azurerm_resource_group.rg.name
 }
 
 resource "azurerm_subnet" "vm_subnet" {
   name                 = "${var.name_prefix}-vm-subnet"
-  resource_group_name  = azurerm_resource_group.rg.name
+  resource_group_name  = data.azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.vnet.name
   address_prefixes     = ["10.0.1.0/24"]
 }
 
 resource "azurerm_subnet" "bastion_subnet" {
   name                 = "AzureBastionSubnet"
-  resource_group_name  = azurerm_resource_group.rg.name
+  resource_group_name  = data.azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.vnet.name
   address_prefixes     = ["10.0.255.0/27"]
 }
 
 resource "azurerm_network_security_group" "nsg" {
   name                = "${var.name_prefix}-nsg"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
+  resource_group_name = data.azurerm_resource_group.rg.name
 
   security_rule {
     name                       = "Allow-SSH-From-BastionSubnet"
@@ -88,8 +93,8 @@ resource "azurerm_network_security_group" "nsg" {
 
 resource "azurerm_network_interface" "nic" {
   name                = "${var.name_prefix}-nic"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
+  resource_group_name = data.azurerm_resource_group.rg.name
 
   ip_configuration {
     name                          = "internal"
@@ -111,8 +116,8 @@ resource "random_password" "admin" {
 
 resource "azurerm_linux_virtual_machine" "vm" {
   name                = "${var.name_prefix}-vm"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
+  resource_group_name = data.azurerm_resource_group.rg.name
   size                = var.vm_size
 
   network_interface_ids = [azurerm_network_interface.nic.id]
@@ -171,16 +176,16 @@ resource "azurerm_virtual_machine_extension" "aad_ssh_login" {
 # Bastion
 resource "azurerm_public_ip" "bastion_pip" {
   name                = "${var.name_prefix}-bastion-pip"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
+  resource_group_name = data.azurerm_resource_group.rg.name
   allocation_method   = "Static"
   sku                 = "Standard"
 }
 
 resource "azurerm_bastion_host" "bastion" {
   name                = "${var.name_prefix}-bastion"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
+  resource_group_name = data.azurerm_resource_group.rg.name
   sku                 = "Standard"
 
   ip_configuration {
