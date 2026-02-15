@@ -1,21 +1,23 @@
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.6"
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = ">= 3.100.0"
+      version = "~> 3.100"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
     }
   }
 }
 
 provider "azurerm" {
   features {}
-  resource_provider_registrations = "none"
+  # Least-privilege: verhindert, dass Terraform versucht, Provider auf Subscription zu registrieren
+  skip_provider_registration = true
 }
 
-# -----------------------------
-# RG + VNET (FEHLT BEI DIR)
-# -----------------------------
 resource "azurerm_resource_group" "rg" {
   name     = var.resource_group_name
   location = var.location
@@ -42,9 +44,6 @@ resource "azurerm_subnet" "bastion_subnet" {
   address_prefixes     = ["10.0.255.0/27"]
 }
 
-# -----------------------------
-# NSG
-# -----------------------------
 resource "azurerm_network_security_group" "nsg" {
   name                = "${var.name_prefix}-nsg"
   location            = azurerm_resource_group.rg.location
@@ -87,16 +86,13 @@ resource "azurerm_network_security_group" "nsg" {
   }
 }
 
-# -----------------------------
-# NIC (ohne Public IP)
-# -----------------------------
 resource "azurerm_network_interface" "nic" {
   name                = "${var.name_prefix}-nic"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
 
   ip_configuration {
-    name                          = "ipconfig1"
+    name                          = "internal"
     subnet_id                     = azurerm_subnet.vm_subnet.id
     private_ip_address_allocation = "Dynamic"
   }
@@ -107,9 +103,12 @@ resource "azurerm_network_interface_security_group_association" "nic_nsg" {
   network_security_group_id = azurerm_network_security_group.nsg.id
 }
 
-# -----------------------------
-# VM (cloud-init aus Datei)
-# -----------------------------
+# Bootstrap admin password (nur für Provisioning; SSH Passwort wird per cloud-init deaktiviert)
+resource "random_password" "admin" {
+  length  = 32
+  special = true
+}
+
 resource "azurerm_linux_virtual_machine" "vm" {
   name                = "${var.name_prefix}-vm"
   location            = azurerm_resource_group.rg.location
@@ -119,11 +118,12 @@ resource "azurerm_linux_virtual_machine" "vm" {
   network_interface_ids = [azurerm_network_interface.nic.id]
 
   admin_username = var.admin_username
-  disable_password_authentication = true
 
-  admin_ssh_key {
-    username   = var.admin_username
-    public_key = var.ssh_public_key
+  disable_password_authentication = false
+  admin_password                  = random_password.admin.result
+
+  identity {
+    type = "SystemAssigned"
   }
 
   source_image_reference {
@@ -141,15 +141,12 @@ resource "azurerm_linux_virtual_machine" "vm" {
 
   custom_data = filebase64("${path.module}/cloud-init.yaml")
 
-  # optional Hardening
   encryption_at_host_enabled = true
-  secure_boot_enabled = true
-  vtpm_enabled        = true
+  secure_boot_enabled        = true
+  vtpm_enabled               = true
 }
 
-# -----------------------------
 # NVIDIA Driver Extension (Azure)
-# -----------------------------
 resource "azurerm_virtual_machine_extension" "nvidia_driver" {
   name                       = "${var.name_prefix}-nvidia-driver"
   virtual_machine_id         = azurerm_linux_virtual_machine.vm.id
@@ -161,9 +158,17 @@ resource "azurerm_virtual_machine_extension" "nvidia_driver" {
   settings = jsonencode({ driverType = "CUDA" })
 }
 
-# -----------------------------
-# Bastion (einziger Public Entry)
-# -----------------------------
+# Entra ID SSH Login Extension (AADSSHLoginForLinux)
+resource "azurerm_virtual_machine_extension" "aad_ssh_login" {
+  name                       = "${var.name_prefix}-aadsshlogin"
+  virtual_machine_id         = azurerm_linux_virtual_machine.vm.id
+  publisher                  = "Microsoft.Azure.ActiveDirectory"
+  type                       = "AADSSHLoginForLinux"
+  type_handler_version       = "1.0"
+  auto_upgrade_minor_version = true
+}
+
+# Bastion
 resource "azurerm_public_ip" "bastion_pip" {
   name                = "${var.name_prefix}-bastion-pip"
   location            = azurerm_resource_group.rg.location

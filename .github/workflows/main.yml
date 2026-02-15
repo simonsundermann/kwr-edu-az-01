@@ -1,4 +1,4 @@
-name: Deploy
+name: Deploy Azure GPU Workstation
 
 on:
   workflow_dispatch:
@@ -12,42 +12,69 @@ permissions:
 jobs:
   terraform:
     runs-on: ubuntu-latest
+
     env:
+      # OIDC for azurerm provider
       ARM_USE_OIDC: "true"
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       TF_IN_AUTOMATION: "true"
-      TF_VAR_admin_username: ${{ secrets.TF_VAR_ADMIN_USERNAME }}
-      TF_VAR_ssh_public_key: ${{ secrets.TF_VAR_SSH_PUBLIC_KEY }}
+      TF_VAR_admin_username: ${{ secrets.TF_VAR_admin_username }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure login (OIDC)
+      - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          
-      - name: Sanity
-        run: az account show
-          
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.7.5"
-          
+
+      - name: Terraform fmt
+        working-directory: workflows/terraform
+        run: terraform fmt -check
+
       - name: Terraform init
         working-directory: workflows/terraform
         run: terraform init
 
       - name: Terraform plan
         working-directory: workflows/terraform
-        run: terraform plan -out tfplan
+        run: terraform plan -out=tfplan
 
       - name: Terraform apply
         if: github.event_name == 'workflow_dispatch'
         working-directory: workflows/terraform
         run: terraform apply -auto-approve tfplan
+
+      - name: Write connection commands to Job Summary
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: workflows/terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "## Azure GPU Workstation – Connection Commands" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Bastion SSH (Entra ID / AAD)" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          terraform output -raw bastion_aad_ssh_cmd >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Bastion VNC Tunnel (TurboVNC Port 5901)" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          terraform output -raw bastion_vnc_tunnel_cmd >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Useful" >> $GITHUB_STEP_SUMMARY
+          echo "- Run **\`az extension add --name bastion\`** on Windows if not installed." >> $GITHUB_STEP_SUMMARY
+          echo "- Then copy/paste commands above in PowerShell." >> $GITHUB_STEP_SUMMARY

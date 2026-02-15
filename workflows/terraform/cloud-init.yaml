@@ -2,109 +2,224 @@
 package_update: true
 package_upgrade: true
 
-
 write_files:
-- path: /usr/local/bin/bootstrap.sh
-permissions: "0755"
-content: |
-#!/usr/bin/env bash
-set -euo pipefail
-exec > >(tee -a /var/log/bootstrap.log) 2>&1
+  - path: /usr/local/bin/bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      exec > >(tee -a /var/log/bootstrap.log) 2>&1
 
+      ADMIN_USER="azureuser"
+      BASTION_CIDR="10.0.255.0/27"   # muss zu deinem AzureBastionSubnet passen
+      VNC_DISPLAY=":1"
+      VNC_PORT="5901"
 
-ADMIN_USER="azureuser"
-BASTION_CIDR="10.0.255.0/27" # muss zu deinem AzureBastionSubnet passen
-VNC_DISPLAY=":1"
-VNC_PORT="5901"
+      ENABLE_CUDA_TOOLKIT="true"     # Toolkit optional; Treiber via Azure Extension
+      CUDA_KEYRING_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
+      CUDA_APT_PKG="cuda-toolkit"
 
+      INSTALL_ROS2="true"
+      ROS_DISTRO="humble"
 
-ENABLE_CUDA_TOOLKIT="true" # nur Toolkit; Treiber besser via Azure Extension
-CUDA_KEYRING_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
-CUDA_APT_PKG="cuda-toolkit"
+      INSTALL_GAZEBO="true"
 
+      INSTALL_ISAAC_HELPERS="true"
+      ISAAC_IMAGE="nvcr.io/nvidia/isaac-sim:latest"
 
-INSTALL_ROS2="true"
-ROS_DISTRO="humble"
+      echo "=== [0/9] SSH hardening: disable password auth ==="
+      mkdir -p /etc/ssh/sshd_config.d
+      cat >/etc/ssh/sshd_config.d/99-hardening.conf <<'EOF'
+      PasswordAuthentication no
+      PermitRootLogin no
+      PubkeyAuthentication yes
+      X11Forwarding no
+      AllowTcpForwarding no
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+      EOF
+      systemctl restart ssh
 
+      echo "=== [1/9] Base packages & firewall ==="
+      apt-get update
+      apt-get install -y --no-install-recommends \
+        ufw fail2ban unattended-upgrades \
+        curl ca-certificates gnupg lsb-release \
+        git wget \
+        dbus-x11 xterm mesa-utils \
+        xfce4 xfce4-goodies
 
-INSTALL_GAZEBO="true" # installiert Gazebo (Ubuntu-Paket) + ROS-Gazebo-Plugins
+      ufw --force reset
+      ufw default deny incoming
+      ufw default allow outgoing
+      ufw allow from "$BASTION_CIDR" to any port 22 proto tcp
+      ufw allow from "$BASTION_CIDR" to any port "$VNC_PORT" proto tcp
+      ufw --force enable
 
+      dpkg-reconfigure -f noninteractive unattended-upgrades || true
 
-INSTALL_ISAAC_HELPERS="true" # legt helper scripts an; Container Pull erfordert ggf. nvcr.io Login
-ISAAC_IMAGE="nvcr.io/nvidia/isaac-sim:latest"
+      echo "=== [2/9] TurboVNC + VirtualGL ==="
+      curl -fsSL https://packagecloud.io/dcommander/turbovnc/gpgkey | gpg --dearmor -o /usr/share/keyrings/turbovnc.gpg
+      echo "deb [signed-by=/usr/share/keyrings/turbovnc.gpg] https://packagecloud.io/dcommander/turbovnc/ubuntu/ jammy main" > /etc/apt/sources.list.d/turbovnc.list
+      apt-get update
+      apt-get install -y turbovnc
+      apt-get install -y virtualgl
 
+      getent group vglusers >/dev/null || groupadd -r vglusers
+      usermod -aG vglusers "$ADMIN_USER"
 
-echo "=== [1/9] Base packages & hardening ==="
-apt-get update
-apt-get install -y --no-install-recommends \
-ufw fail2ban unattended-upgrades \
-curl ca-certificates gnupg lsb-release \
-git wget \
-dbus-x11 xterm mesa-utils \
-xfce4 xfce4-goodies
+      install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_USER" "/home/$ADMIN_USER/.vnc"
+      cat >"/home/$ADMIN_USER/.vnc/xstartup" <<'EOF'
+      #!/bin/sh
+      unset SESSION_MANAGER
+      unset DBUS_SESSION_BUS_ADDRESS
+      startxfce4 &
+      EOF
+      chown "$ADMIN_USER:$ADMIN_USER" "/home/$ADMIN_USER/.vnc/xstartup"
+      chmod 0755 "/home/$ADMIN_USER/.vnc/xstartup"
 
+      cat >/etc/systemd/system/turbovnc@.service <<EOF
+      [Unit]
+      Description=TurboVNC server for display %i
+      After=network.target
 
-cat >/etc/ssh/sshd_config.d/99-hardening.conf <<'EOF'
-PasswordAuthentication no
-PermitRootLogin no
-PubkeyAuthentication yes
-X11Forwarding no
-AllowTcpForwarding no
-ClientAliveInterval 300
-ClientAliveCountMax 2
-EOF
-systemctl restart ssh
+      [Service]
+      Type=forking
+      User=$ADMIN_USER
+      PAMName=login
+      PIDFile=/home/$ADMIN_USER/.vnc/%H:%i.pid
+      ExecStart=/opt/TurboVNC/bin/vncserver %i -geometry 1920x1080 -depth 24
+      ExecStop=/opt/TurboVNC/bin/vncserver -kill %i
 
+      [Install]
+      WantedBy=multi-user.target
+      EOF
 
-ufw --force reset
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow from "$BASTION_CIDR" to any port 22 proto tcp
-ufw allow from "$BASTION_CIDR" to any port "$VNC_PORT" proto tcp
-ufw --force enable
+      systemctl daemon-reload
+      systemctl enable "turbovnc@$VNC_DISPLAY"
 
+      echo "=== [3/9] Docker + NVIDIA Container Toolkit ==="
+      apt-get install -y docker.io
+      systemctl enable --now docker
 
-dpkg-reconfigure -f noninteractive unattended-upgrades || true
+      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit.gpg
+      cat >/etc/apt/sources.list.d/nvidia-container-toolkit.list <<EOF
+      deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/amd64 /
+      EOF
+      apt-get update
+      apt-get install -y nvidia-container-toolkit
+      nvidia-ctk runtime configure --runtime=docker || true
+      systemctl restart docker
 
+      echo "=== [4/9] CUDA toolkit (optional) ==="
+      if [[ "$ENABLE_CUDA_TOOLKIT" == "true" ]]; then
+        wget -qO /tmp/cuda-keyring.deb "$CUDA_KEYRING_URL"
+        dpkg -i /tmp/cuda-keyring.deb
+        apt-get update
+        apt-get install -y "$CUDA_APT_PKG" || true
+      fi
 
-echo "=== [2/9] TurboVNC + VirtualGL ==="
-# TurboVNC via Packagecloud Repo (robuster als Random-Downloads)
-# Falls deine Umgebung outbound restriktiv ist, musst du diese Domains erlauben.
-curl -fsSL https://packagecloud.io/dcommander/turbovnc/gpgkey | gpg --dearmor -o /usr/share/keyrings/turbovnc.gpg
-echo "deb [signed-by=/usr/share/keyrings/turbovnc.gpg] https://packagecloud.io/dcommander/turbovnc/ubuntu/ jammy main" > /etc/apt/sources.list.d/turbovnc.list
-apt-get update
-apt-get install -y turbovnc
+      echo "=== [5/9] ROS 2 + Gazebo ==="
+      if [[ "$INSTALL_ROS2" == "true" ]]; then
+        curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+          | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
+          > /etc/apt/sources.list.d/ros2.list
+        apt-get update
+        apt-get install -y "ros-$ROS_DISTRO-desktop" python3-colcon-common-extensions
+        echo "source /opt/ros/$ROS_DISTRO/setup.bash" > /etc/profile.d/ros2.sh
+      fi
 
+      if [[ "$INSTALL_GAZEBO" == "true" ]]; then
+        apt-get install -y gazebo
+        apt-get install -y "ros-$ROS_DISTRO-gazebo-ros-pkgs" || true
+      fi
 
-# VirtualGL (Ubuntu-Paket)
-apt-get install -y virtualgl
+      echo "=== [6/9] Helper scripts ==="
+      cat >/usr/local/bin/gpu-check <<'EOF'
+      #!/usr/bin/env bash
+      set -e
+      echo "== nvidia-smi =="; nvidia-smi || true
+      echo "== OpenGL via VirtualGL ==";
+      /opt/VirtualGL/bin/vglrun glxinfo | grep -E "OpenGL vendor|OpenGL renderer" || true
+      EOF
+      chmod +x /usr/local/bin/gpu-check
 
+      cat >/usr/local/bin/vnc-start <<EOF
+      #!/usr/bin/env bash
+      set -e
+      systemctl start "turbovnc@$VNC_DISPLAY"
+      EOF
+      chmod +x /usr/local/bin/vnc-start
 
-# vglusers
-getent group vglusers >/dev/null || groupadd -r vglusers
-usermod -aG vglusers "$ADMIN_USER"
+      cat >/usr/local/bin/vnc-stop <<EOF
+      #!/usr/bin/env bash
+      set -e
+      systemctl stop "turbovnc@$VNC_DISPLAY"
+      EOF
+      chmod +x /usr/local/bin/vnc-stop
 
+      if [[ "$INSTALL_ISAAC_HELPERS" == "true" ]]; then
+        cat >/usr/local/bin/isaac-sim-run <<EOF
+      #!/usr/bin/env bash
+      set -euo pipefail
+      docker run --rm --gpus all \
+        -e DISPLAY=$VNC_DISPLAY \
+        -v /tmp/.X11-unix:/tmp/.X11-unix \
+        --network host \
+        $ISAAC_IMAGE
+      EOF
+        chmod +x /usr/local/bin/isaac-sim-run
+      fi
 
-# VNC xstartup
-install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_USER" "/home/$ADMIN_USER/.vnc"
-cat >"/home/$ADMIN_USER/.vnc/xstartup" <<'EOF'
-#!/bin/sh
-unset SESSION_MANAGER
-unset DBUS_SESSION_BUS_ADDRESS
-startxfce4 &
-EOF
-chown "$ADMIN_USER:$ADMIN_USER" "/home/$ADMIN_USER/.vnc/xstartup"
-chmod 0755 "/home/$ADMIN_USER/.vnc/xstartup"
+      echo "=== [7/9] MOTD ==="
+      cat >/etc/motd <<EOF
+      Azure GPU Robotics Workstation ready.
 
+      LOGIN (no SSH keys needed):
+        - Use Azure Bastion SSH with Entra ID (AAD) auth from your Windows PC.
 
-# systemd TurboVNC
-cat >/etc/systemd/system/turbovnc@.service <<EOF
-[Unit]
-Description=TurboVNC server for display %i
-After=network.target
+      ONE-TIME (required for VirtualGL security config):
+        1) sudo vglserver_config
+           - Restrict 3D X server to vglusers?  y
+           - Restrict framebuffer device to vglusers? y
+        2) sudo -u $ADMIN_USER /opt/TurboVNC/bin/vncpasswd
+        3) sudo systemctl start turbovnc$VNC_DISPLAY
 
+      Useful commands:
+        gpu-check
+        vnc-start / vnc-stop
+        vglrun gazebo
+        vglrun rviz2
+        isaac-sim-run (may require docker login nvcr.io)
 
-[Service]
-Type=forking
-User=$ADMIN_USER
+      Logs:
+        /var/log/bootstrap.log
+      EOF
+
+      echo "=== [8/9] Smoke tests (non-fatal) ==="
+      nvidia-smi || true
+
+      echo "=== [9/9] Done ==="
+
+  - path: /etc/systemd/system/bootstrap-one-shot.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Bootstrap (cloud-init) one-shot installer
+      After=cloud-init.target network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/bootstrap.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now bootstrap-one-shot.service
+
 final_message: "Bootstrap started via systemd. Check /var/log/bootstrap.log"
