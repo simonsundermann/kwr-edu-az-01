@@ -99,6 +99,8 @@ fi
 #  --role "Contributor" \
 #  --scope "$RG_ID" >/dev/null 2>&1 || true
 
+#TODO: not performed, to be tested. So far added these roles manually
+
 # ---- Subscription Reader (needed for provider reads in many setups) ----
 echo "Assigning SP Contributor on subscription (safe, required often)..."
 az role assignment create \

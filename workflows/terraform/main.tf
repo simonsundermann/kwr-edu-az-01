@@ -146,8 +146,8 @@ resource "azurerm_linux_virtual_machine" "vm" {
 
   custom_data = filebase64("${path.module}/cloud-init.yaml")
 
-  encryption_at_host_enabled = true
-  secure_boot_enabled        = true
+  #encryption_at_host_enabled = true
+  #secure_boot_enabled        = true
   vtpm_enabled               = true
 }
 
