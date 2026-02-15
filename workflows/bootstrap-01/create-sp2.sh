@@ -68,11 +68,11 @@ echo "OIDC: $OIDC_MODE"
 echo "====================="
 
 # ---- Ensure RG exists ----
-if ! az group show -n "$RESOURCE_GROUP" >/dev/null 2>&1; then
-  echo "Creating Resource Group..."
-  az group create -n "$RESOURCE_GROUP" -l "$LOCATION" >/dev/null
-fi
-RG_ID="$(az group show -n "$RESOURCE_GROUP" --query id -o tsv)"
+#if ! az group show -n "$RESOURCE_GROUP" >/dev/null 2>&1; then
+#  echo "Creating Resource Group..."
+#  az group create -n "$RESOURCE_GROUP" -l "$LOCATION" >/dev/null
+#fi
+#RG_ID="$(az group show -n "$RESOURCE_GROUP" --query id -o tsv)"
 
 # ---- Create/reuse App ----
 EXISTING_APP_ID="$(az ad app list --display-name "$SP_NAME" --query '[0].appId' -o tsv 2>/dev/null || true)"
@@ -92,14 +92,21 @@ if [[ -z "${SP_OBJECT_ID:-}" || "${SP_OBJECT_ID:-}" == "None" ]]; then
 fi
 
 # ---- RBAC: Contributor on RG ----
-echo "Assigning SP Contributor on RG..."
+#echo "Assigning SP Contributor on RG..."
+#az role assignment create \
+#  --assignee-object-id "$SP_OBJECT_ID" \
+#  --assignee-principal-type ServicePrincipal \
+#  --role "Contributor" \
+#  --scope "$RG_ID" >/dev/null 2>&1 || true
+
+# ---- Subscription Reader (needed for provider reads in many setups) ----
+echo "Assigning SP Contributor on subscription (safe, required often)..."
 az role assignment create \
   --assignee-object-id "$SP_OBJECT_ID" \
   --assignee-principal-type ServicePrincipal \
   --role "Contributor" \
-  --scope "$RG_ID" >/dev/null 2>&1 || true
+  --scope "/subscriptions/$SUBSCRIPTION_ID" >/dev/null 2>&1 || true
 
-# ---- Subscription Reader (needed for provider reads in many setups) ----
 echo "Assigning SP Reader on subscription (safe, required often)..."
 az role assignment create \
   --assignee-object-id "$SP_OBJECT_ID" \
