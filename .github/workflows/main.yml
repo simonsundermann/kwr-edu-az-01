@@ -37,6 +37,32 @@ jobs:
         with:
           terraform_version: "1.7.5"
 
+      - name: Create Terraform State Storage Account
+        run: |
+          # Create resource group for state storage
+          az group create \
+            --name "rg-mgmt-tfstate" \
+            --location "germanywestcentral"
+          
+          # Create storage account (if it doesn't exist)
+          az storage account create \
+            --name "mgmttfstate" \
+            --resource-group "rg-mgmt-tfstate" \
+            --location "germanywestcentral" \
+            --sku "Standard_LRS" \
+            --kind "StorageV2" \
+            --https-only true \
+            --min-tls-version "TLS1_2" \
+            || true
+          
+          # Create container (if it doesn't exist)
+          az storage container create \
+            --name "tfstate" \
+            --account-name "mgmttfstate" \
+            || true
+          
+          echo "Terraform state storage account ready"
+
       - name: Terraform fmt
         working-directory: workflows/terraform
         run: terraform fmt -check
