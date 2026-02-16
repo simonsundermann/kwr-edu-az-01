@@ -46,7 +46,7 @@ jobs:
           
           # Create storage account (if it doesn't exist)
           az storage account create \
-            --name "mgmttfstate" \
+            --name "kwreduaz01mgmttfstate" \
             --resource-group "rg-mgmt-tfstate" \
             --location "germanywestcentral" \
             --sku "Standard_LRS" \
