@@ -10,13 +10,22 @@ terraform {
       version = "~> 3.6"
     }
   }
+  backend "azurerm" {
+    resource_group_name  = "rg-mgmt-tfstate"
+    storage_account_name = "mgmttfstate"
+    container_name       = "tfstate"
+    key                  = "terraform.tfstate"
+    use_oidc             = true
+  }
 }
 
 provider "azurerm" {
   features {}
   # Least-privilege: verhindert, dass Terraform versucht, Provider auf Subscription zu registrieren
   skip_provider_registration = true
+
 }
+
 #RG created in create-sp2 with role assignment already
 #data "azurerm_resource_group" "rg" {
 #  name = var.resource_group_name
