@@ -58,7 +58,7 @@ jobs:
           # Create container (if it doesn't exist)
           az storage container create \
             --name "tfstate" \
-            --account-name "mgmttfstate" \
+            --account-name "kwreduaz01mgmttfstate" \
             || true
           
           echo "Terraform state storage account ready"
