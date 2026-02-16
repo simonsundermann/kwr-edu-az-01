@@ -20,9 +20,11 @@ if ! gh auth status >/dev/null 2>&1; then
   echo "GitHub CLI not logged in. Starting: gh auth login"
   gh auth login
 fi
-
+#TODO test! following santization not tested
 # ---- Interactive inputs ----
 read -rp "GitHub repository (owner/repo): " GITHUB_REPO
+# Strip ANSI escape sequences that may have been captured by terminal navigation
+GITHUB_REPO=$(printf '%s' "$GITHUB_REPO" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g')
 if ! [[ "$GITHUB_REPO" =~ ^[^/]+/[^/]+$ ]]; then
   echo "Invalid repo format. Must be owner/repo"
   exit 1

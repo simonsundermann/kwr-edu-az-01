@@ -15,8 +15,8 @@ variable "name_prefix" {
 
 variable "vm_size" {
   type    = string
-  default = "Standard_D4s_v5"
-  #default = "Standard_NC4as_T4_v3"
+  #default = "Standard_D4s_v5"
+  default = "Standard_NC4as_T4_v3"
 }
 
 variable "admin_username" {
