@@ -1,0 +1,57 @@
+name: Destroy Azure GPU Workstation (Nightly)
+
+on:
+  schedule:
+    # GitHub cron is UTC. This is 00:00 UTC daily.
+    - cron: "0 0 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-azure-gpu-destroy-nightly
+  cancel-in-progress: false
+
+jobs:
+  terraform-destroy:
+    runs-on: ubuntu-latest
+
+    env:
+      # OIDC for azurerm provider
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_VAR_admin_username: ${{ secrets.TF_VAR_admin_username }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+
+      - name: Terraform init
+        working-directory: workflows/terraform
+        run: terraform init
+
+      # Optional: quick visibility in logs
+      - name: Terraform state list (optional)
+        working-directory: workflows/terraform
+        run: terraform state list || true
+
+      - name: Terraform destroy
+        working-directory: workflows/terraform
+        run: terraform destroy -auto-approve

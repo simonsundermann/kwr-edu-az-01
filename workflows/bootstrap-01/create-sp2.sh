@@ -109,14 +109,15 @@ az role assignment create \
   --assignee-object-id "$SP_OBJECT_ID" \
   --assignee-principal-type ServicePrincipal \
   --role "Contributor" \
-  --scope "/subscriptions/$SUBSCRIPTION_ID" >/dev/null 2>&1 
+  --scope "subscriptions/$SUBSCRIPTION_ID" >/dev/null 2>&1 
+
 
 echo "Assigning SP Reader on subscription (safe, required often)..."
 az role assignment create \
   --assignee-object-id "$SP_OBJECT_ID" \
   --assignee-principal-type ServicePrincipal \
   --role "Reader" \
-  --scope "/subscriptions/$SUBSCRIPTION_ID" >/dev/null 2>&1 
+  --scope "subscriptions/$SUBSCRIPTION_ID" >/dev/null 2>&1 
 
 # ---- Federated Credential ----
 if [[ "$OIDC_MODE" == "environment" ]]; then
@@ -167,7 +168,7 @@ if [[ "$SET_VM_LOGIN" =~ ^[Yy]$ ]]; then
       --assignee-object-id "$USER_OBJECT_ID" \
       --assignee-principal-type User \
       --role "Virtual Machine Administrator Login" \
-      --scope "/subscriptions/$SUBSCRIPTION_ID" >/dev/null 2>&1 || true
+      --scope "subscriptions/$SUBSCRIPTION_ID" >/dev/null 2>&1 || true
     echo "OK: Role assigned."
   fi
 fi
