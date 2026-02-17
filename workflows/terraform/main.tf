@@ -196,8 +196,7 @@ resource "azurerm_bastion_host" "bastion" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   sku                 = "Standard"
-
-  tunneling_enabled = true
+  tunneling_enabled   = true
   
   ip_configuration {
     name                 = "bastion-ipconfig"
