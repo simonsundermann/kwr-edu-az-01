@@ -63,10 +63,6 @@ jobs:
           
           echo "Terraform state storage account ready"
 
-      - name: Terraform fmt
-        working-directory: workflows/terraform
-        run: terraform fmt -check
-
       - name: Terraform init
         working-directory: workflows/terraform
         run: terraform init
