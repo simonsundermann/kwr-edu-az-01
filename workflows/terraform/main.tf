@@ -81,6 +81,7 @@ resource "azurerm_network_security_group" "nsg" {
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
+    # VNC access is intended via Bastion tunnel (Windows client local port mapping from outputs.tf).
     source_address_prefix      = azurerm_subnet.bastion_subnet.address_prefixes[0]
     destination_port_range     = "5901"
     source_port_range          = "*"
@@ -153,7 +154,9 @@ resource "azurerm_linux_virtual_machine" "vm" {
     disk_size_gb         = 128
   }
 
-  custom_data = filebase64("${path.module}/cloud-init.yaml")
+  custom_data = base64encode(templatefile("${path.module}/cloud-init.yaml", {
+    admin_username = var.admin_username
+  }))
 
   # encryption_at_host_enabled = true
   # secure_boot_enabled        = true
@@ -195,6 +198,7 @@ resource "azurerm_bastion_host" "bastion" {
   name                = "${var.name_prefix}-bastion"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
+  # Standard SKU + tunneling are required for `az network bastion tunnel` from Windows/local CLI.
   sku                 = "Standard"
   tunneling_enabled   = true
   

@@ -91,10 +91,11 @@ jobs:
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          echo "### Bastion VNC Tunnel (TurboVNC Port 5901)" >> $GITHUB_STEP_SUMMARY
+          echo "### Bastion VNC Tunnel (VM port 5901 -> Local port 55901)" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           terraform output -raw bastion_vnc_tunnel_cmd >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "- VNC client target: **\`$(terraform output -raw vnc_client_target)\`** (double colon means TCP port)." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           echo "### Useful" >> $GITHUB_STEP_SUMMARY
