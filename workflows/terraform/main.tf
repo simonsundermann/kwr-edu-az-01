@@ -76,14 +76,14 @@ resource "azurerm_network_security_group" "nsg" {
   }
 
   security_rule {
-    name                       = "Allow-VNC-From-BastionSubnet"
+    name                       = "Allow-RDP-From-BastionSubnet"
     priority                   = 110
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
-    # VNC access is intended via Bastion tunnel (Windows client local port mapping from outputs.tf).
+    # RDP access is intended via Bastion tunnel (Windows client local port mapping from outputs.tf).
     source_address_prefix      = azurerm_subnet.bastion_subnet.address_prefixes[0]
-    destination_port_range     = "5901"
+    destination_port_range     = "3389"
     source_port_range          = "*"
     destination_address_prefix = "*"
   }
@@ -155,7 +155,8 @@ resource "azurerm_linux_virtual_machine" "vm" {
   }
 
   custom_data = base64encode(templatefile("${path.module}/cloud-init.yaml", {
-    admin_username = var.admin_username
+    admin_username              = var.admin_username
+    robotics_postinstall_script = indent(6, "\n${replace(file("${path.module}/robotics-postinstall.sh"), "__ADMIN_USER__", var.admin_username)}")
   }))
 
   # encryption_at_host_enabled = true

@@ -3,6 +3,11 @@ package_update: true
 package_upgrade: true
 
 write_files:
+  - path: /usr/local/bin/robotics-postinstall.sh
+    permissions: "0755"
+    content: |
+${robotics_postinstall_script}
+
   - path: /usr/local/bin/bootstrap.sh
     permissions: "0755"
     content: |
@@ -12,26 +17,7 @@ write_files:
 
       ADMIN_USER="${admin_username}"
       BASTION_CIDR="10.0.255.0/27"
-      VNC_DISPLAY_NUM="1"
-      VNC_PORT="5901"
-      VNC_GEOMETRY="1920x1080"
-      VNC_DEPTH="24"
-
-      ENABLE_CUDA_TOOLKIT="true"
-      CUDA_KEYRING_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
-      CUDA_APT_PKG="cuda-toolkit"
-
-      INSTALL_ROS2="true"
-      ROS_DISTRO="humble"
-
-      INSTALL_GAZEBO="true"
-
-      INSTALL_ISAAC_HELPERS="true"
-      ISAAC_IMAGE="nvcr.io/nvidia/isaac-sim:latest"
-
-      VNC_SERVER_BIN=""
-      VNC_PASSWD_BIN=""
-      VNC_SERVICE_NAME="vncserver"
+      RDP_PORT="3389"
 
       apt_update() {
         apt-get update
@@ -41,7 +27,7 @@ write_files:
         DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
       }
 
-      echo "=== [0/10] SSH hardening and AAD sudo ==="
+      echo "=== [0/5] SSH hardening and AAD sudo ==="
       mkdir -p /etc/ssh/sshd_config.d
       cat >/etc/ssh/sshd_config.d/99-hardening.conf <<'EOF'
       PasswordAuthentication no
@@ -58,214 +44,51 @@ write_files:
       chmod 0440 /etc/sudoers.d/99-aad-admins
       visudo -cf /etc/sudoers.d/99-aad-admins >/dev/null
 
-      echo "=== [1/10] Base packages and firewall ==="
+      echo "=== [1/5] Base packages ==="
       apt_update
       apt_install --no-install-recommends \
         ufw fail2ban unattended-upgrades \
         curl ca-certificates gnupg lsb-release software-properties-common \
         git wget \
-        dbus-x11 xterm mesa-utils \
-        xfce4 xfce4-goodies
+        xrdp xorgxrdp xfce4 xfce4-goodies dbus-x11 xterm
+      dpkg-reconfigure -f noninteractive unattended-upgrades || true
 
+      echo "=== [2/5] Firewall for Bastion access (SSH + RDP) ==="
       ufw --force reset
       ufw default deny incoming
       ufw default allow outgoing
       ufw allow from "$BASTION_CIDR" to any port 22 proto tcp
-      ufw allow from "$BASTION_CIDR" to any port "$VNC_PORT" proto tcp
+      ufw allow from "$BASTION_CIDR" to any port "$RDP_PORT" proto tcp
       ufw --force enable
 
-      dpkg-reconfigure -f noninteractive unattended-upgrades || true
-
-      echo "=== [2/10] VNC install (TurboVNC preferred, TigerVNC fallback) ==="
-      if curl -fsSL https://packagecloud.io/dcommander/turbovnc/gpgkey | gpg --dearmor -o /usr/share/keyrings/turbovnc.gpg; then
-        echo "deb [signed-by=/usr/share/keyrings/turbovnc.gpg] https://packagecloud.io/dcommander/turbovnc/ubuntu/ jammy main" >/etc/apt/sources.list.d/turbovnc.list
-        apt_update || true
-      else
-        echo "TurboVNC repo key fetch failed. Falling back to Ubuntu repositories."
+      echo "=== [3/5] Configure and enable xRDP ==="
+      adduser xrdp ssl-cert || true
+      echo "startxfce4" >/etc/skel/.xsession
+      if id "$ADMIN_USER" >/dev/null 2>&1; then
+        echo "startxfce4" >"/home/$ADMIN_USER/.xsession"
+        chown "$ADMIN_USER:$ADMIN_USER" "/home/$ADMIN_USER/.xsession"
+        chmod 0644 "/home/$ADMIN_USER/.xsession"
       fi
+      systemctl enable --now xrdp
 
-      if apt-cache policy turbovnc 2>/dev/null | grep -q "Candidate:" && ! apt-cache policy turbovnc 2>/dev/null | grep -q "Candidate: (none)"; then
-        apt_install turbovnc || true
-      fi
-
-      if [[ -x /opt/TurboVNC/bin/vncserver ]] && [[ -x /opt/TurboVNC/bin/vncpasswd ]]; then
-        VNC_SERVER_BIN="/opt/TurboVNC/bin/vncserver"
-        VNC_PASSWD_BIN="/opt/TurboVNC/bin/vncpasswd"
-        apt_install virtualgl || true
-        getent group vglusers >/dev/null || groupadd -r vglusers
-        usermod -aG vglusers "$ADMIN_USER"
-      else
-        echo "TurboVNC package unavailable. Installing TigerVNC fallback."
-        add-apt-repository -y universe || true
-        apt_update
-        apt_install tigervnc-standalone-server tigervnc-common
-        VNC_SERVER_BIN="$(command -v vncserver)"
-        VNC_PASSWD_BIN="$(command -v vncpasswd)"
-      fi
-
-      if [[ -z "$VNC_SERVER_BIN" ]] || [[ -z "$VNC_PASSWD_BIN" ]]; then
-        echo "Unable to find vncserver or vncpasswd after installation." >&2
-        exit 1
-      fi
-
-      install -d -m 0700 -o "$ADMIN_USER" -g "$ADMIN_USER" "/home/$ADMIN_USER/.vnc"
-      cat >"/home/$ADMIN_USER/.vnc/xstartup" <<'EOF'
-      #!/bin/sh
-      unset SESSION_MANAGER
-      unset DBUS_SESSION_BUS_ADDRESS
-      exec startxfce4
-      EOF
-      chown "$ADMIN_USER:$ADMIN_USER" "/home/$ADMIN_USER/.vnc/xstartup"
-      chmod 0755 "/home/$ADMIN_USER/.vnc/xstartup"
-
-      cat >/etc/systemd/system/$VNC_SERVICE_NAME@.service <<EOF
-      [Unit]
-      Description=VNC server for display %i
-      After=network.target
-
-      [Service]
-      Type=forking
-      User=$ADMIN_USER
-      PAMName=login
-      PIDFile=/home/$ADMIN_USER/.vnc/%H:%i.pid
-      ExecStart=/bin/bash -lc '$VNC_SERVER_BIN :%i -geometry $VNC_GEOMETRY -depth $VNC_DEPTH'
-      ExecStop=/bin/bash -lc '$VNC_SERVER_BIN -kill :%i'
-
-      [Install]
-      WantedBy=multi-user.target
-      EOF
-
-      systemctl daemon-reload
-      systemctl enable "$VNC_SERVICE_NAME@$VNC_DISPLAY_NUM"
-
-      echo "=== [3/10] Docker and NVIDIA Container Toolkit ==="
-      apt_install docker.io
-      systemctl enable --now docker
-
-      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit.gpg
-      cat >/etc/apt/sources.list.d/nvidia-container-toolkit.list <<EOF
-      deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/amd64 /
-      EOF
-      apt_update
-      apt_install nvidia-container-toolkit
-      nvidia-ctk runtime configure --runtime=docker || true
-      systemctl restart docker
-
-      echo "=== [4/10] CUDA toolkit (optional) ==="
-      if [[ "$ENABLE_CUDA_TOOLKIT" == "true" ]]; then
-        wget -qO /tmp/cuda-keyring.deb "$CUDA_KEYRING_URL"
-        dpkg -i /tmp/cuda-keyring.deb
-        apt_update
-        apt_install "$CUDA_APT_PKG" || true
-      fi
-
-      echo "=== [5/10] ROS 2 and Gazebo ==="
-      if [[ "$INSTALL_ROS2" == "true" ]]; then
-        curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-          | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg
-        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
-          >/etc/apt/sources.list.d/ros2.list
-        apt_update
-        apt_install "ros-$ROS_DISTRO-desktop" python3-colcon-common-extensions
-        echo "source /opt/ros/$ROS_DISTRO/setup.bash" >/etc/profile.d/ros2.sh
-      fi
-
-      if [[ "$INSTALL_GAZEBO" == "true" ]]; then
-        apt_install gazebo
-        apt_install "ros-$ROS_DISTRO-gazebo-ros-pkgs" || true
-      fi
-
-      echo "=== [6/10] Helper scripts ==="
-      cat >/usr/local/bin/gpu-check <<'EOF'
-      #!/usr/bin/env bash
-      set -euo pipefail
-      echo "== nvidia-smi =="
-      nvidia-smi || true
-      echo "== OpenGL =="
-      if command -v vglrun >/dev/null 2>&1; then
-        vglrun glxinfo | grep -E "OpenGL vendor|OpenGL renderer" || true
-      elif [[ -x /opt/VirtualGL/bin/vglrun ]]; then
-        /opt/VirtualGL/bin/vglrun glxinfo | grep -E "OpenGL vendor|OpenGL renderer" || true
-      else
-        glxinfo | grep -E "OpenGL vendor|OpenGL renderer" || true
-        echo "VirtualGL not installed."
-      fi
-      EOF
-      chmod +x /usr/local/bin/gpu-check
-
-      cat >/usr/local/bin/vnc-passwd <<EOF
-      #!/usr/bin/env bash
-      set -euo pipefail
-      sudo -u $ADMIN_USER $VNC_PASSWD_BIN
-      EOF
-      chmod +x /usr/local/bin/vnc-passwd
-
-      cat >/usr/local/bin/vnc-start <<EOF
-      #!/usr/bin/env bash
-      set -euo pipefail
-      systemctl start "$VNC_SERVICE_NAME@$VNC_DISPLAY_NUM"
-      EOF
-      chmod +x /usr/local/bin/vnc-start
-
-      cat >/usr/local/bin/vnc-stop <<EOF
-      #!/usr/bin/env bash
-      set -euo pipefail
-      systemctl stop "$VNC_SERVICE_NAME@$VNC_DISPLAY_NUM"
-      EOF
-      chmod +x /usr/local/bin/vnc-stop
-
-      cat >/usr/local/bin/vnc-status <<EOF
-      #!/usr/bin/env bash
-      set -euo pipefail
-      systemctl status "$VNC_SERVICE_NAME@$VNC_DISPLAY_NUM" --no-pager
-      ss -lntp | grep "$VNC_PORT" || true
-      EOF
-      chmod +x /usr/local/bin/vnc-status
-
-      if [[ "$INSTALL_ISAAC_HELPERS" == "true" ]]; then
-        cat >/usr/local/bin/isaac-sim-run <<EOF
-      #!/usr/bin/env bash
-      set -euo pipefail
-      docker run --rm --gpus all \
-        -e DISPLAY=:$VNC_DISPLAY_NUM \
-        -v /tmp/.X11-unix:/tmp/.X11-unix \
-        --network host \
-        $ISAAC_IMAGE
-      EOF
-        chmod +x /usr/local/bin/isaac-sim-run
-      fi
-
-      echo "=== [7/10] MOTD ==="
+      echo "=== [4/5] MOTD ==="
       cat >/etc/motd <<EOF
       Azure GPU Robotics Workstation ready.
 
-      LOGIN:
+      Access:
         - Use Azure Bastion SSH with Entra ID (AAD) from your Windows PC.
+        - RDP via Bastion tunnel: VM port 3389 -> local port 53389.
+        - Connect with mstsc to 127.0.0.1:53389.
 
-      ONE-TIME:
-        1) sudo vnc-passwd
-        2) sudo vnc-start
-        3) sudo vnc-status
-
-      LOCAL CLIENT:
-        - Start Bastion tunnel with --resource-port 5901 and --port 55901.
-        - Connect your VNC client to localhost::55901 (double colon means TCP port).
-
-      Useful commands:
-        gpu-check
-        vnc-passwd / vnc-start / vnc-stop / vnc-status
-        vglrun gazebo
-        vglrun rviz2
-        isaac-sim-run (may require docker login nvcr.io)
+      Manual post-install (recommended after first login):
+        sudo /usr/local/bin/robotics-postinstall.sh
 
       Logs:
         /var/log/bootstrap.log
+        /var/log/robotics-postinstall.log
       EOF
 
-      echo "=== [8/10] Smoke tests (non-fatal) ==="
-      nvidia-smi || true
-
-      echo "=== [9/10] Bootstrap complete ==="
+      echo "=== [5/5] Bootstrap complete ==="
 
 runcmd:
   - /usr/local/bin/bootstrap.sh
